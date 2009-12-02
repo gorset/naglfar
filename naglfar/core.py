@@ -332,7 +332,6 @@ if hasattr(select, 'epoll'):
 
     def _goClose(fd):
         if fd in ioChanges:
-            epoll.unregister(fd)
             del ioChanges[fd]
             for key in (fd, select.EPOLLIN), (fd, select.EPOLLOUT):
                 if key in ioChanges:
