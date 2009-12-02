@@ -383,8 +383,8 @@ elif hasattr(select, 'kqueue'):
             _kqueueRunner.active = True
             queue.append(_kqueueRunner)
 
-    _goWrite = lambda fd, m:_goEpoll(fd, select.KQ_FILTER_WRITE, m)
-    _goRead  = lambda fd, m:_goEpoll(fd, select.KQ_FILTER_READ,  m)
+    _goWrite = lambda fd, m:_goKqueue(fd, select.KQ_FILTER_WRITE, m)
+    _goRead  = lambda fd, m:_goKqueue(fd, select.KQ_FILTER_READ,  m)
 
     def _goClose(fd):
         for key in (fd, select.KQ_FILTER_WRITE), (fd, select.KQ_FILTER_READ):
