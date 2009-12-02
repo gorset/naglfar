@@ -108,5 +108,23 @@ class kqueue:
     kevent = kevent
     control = kevent
 
-select.kevent = Event
-select.kqueue = kqueue
+def selectBroken():
+    import socket
+    a, b = socket.socketpair()
+    kq = select.kqueue()
+    try:
+        a.send('a')
+        b.send('b')
+        event1 = select.kevent(a.fileno(), select.KQ_FILTER_READ, select.KQ_EV_ADD | select.KQ_EV_ENABLE)
+        event2 = select.kevent(b.fileno(), select.KQ_FILTER_READ, select.KQ_EV_ADD | select.KQ_EV_ENABLE)
+        r = kq.control([event1, event2], 2, 0)
+        return any(i.flags & select.KQ_EV_ERROR for i in r)
+
+    finally:
+        a.close()
+        b.close()
+        kq.close()
+
+if selectBroken():
+    select.kevent = Event
+    select.kqueue = kqueue
