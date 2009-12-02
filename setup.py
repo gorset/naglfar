@@ -5,6 +5,8 @@ try:
 except ImportError:
     raise Exception('greenlet missing. You can get it at http://pypi.python.org/pypi/greenlet')
 
+import naglfar
+
 setup(name='naglfar',
     description='Asynchronous IO library for python using greenlet based coroutines',
     keywords='greenlet event async coroutine channel',
