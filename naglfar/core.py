@@ -77,7 +77,7 @@ class ScheduledMixIn:
         # descriptors, so we put the request in an object which will wrap all
         # IO calls using kqueue and schedule/Channel.
         request = DummySocket(ScheduledFile.fromSocket(request))
-        @go#go
+        @go
         def runner():
             self.finish_request(request, client_address)
             self.close_request(request)
@@ -103,7 +103,7 @@ class ScheduledMixIn:
                 self.acceptStream.write(client)
             if not eof:
                 return runner
-        _goKqueue(self.socket.fileno(), select.KQ_FILTER_READ, runner)
+        _goRead(self.socket.fileno(), runner)
 
     def get_request(self):
         return self.acceptStream.read()
@@ -192,8 +192,6 @@ from greenlet import greenlet, getcurrent
 from functools import partial
 from collections import deque, namedtuple
 
-import patch_kqueue # kqueue is broken for some versions. This will fix it using ctypes
-
 # This is just a job queue which we routinely pop to do more work. There's no
 # "switch thread after N time" mecanism, so each job needs to behave. 
 queue = deque()
@@ -248,11 +246,13 @@ def goRead(fd, n=None):
     def reader(bytesReady, eof):
         if bytesReady:
             # read maxmium or the bytes remaing
-            buffer.extend(os.read(fd, bytesReady if n is None else min(bytesReady, n - len(buffer))))
+            data = os.read(fd, bytesReady if n is None else min(bytesReady, n - len(buffer)))
+            eof = not data
+            buffer.extend(data)
             if not eof and n is not None and len(buffer) < n:
                 return reader
         c.write(str(buffer))
-    _goKqueue(fd, select.KQ_FILTER_READ, reader) 
+    _goRead(fd, reader)
     return c.read
 
 def goWrite(fd, data):
@@ -268,66 +268,130 @@ def goWrite(fd, data):
                 o['offset'] = offset
                 return writer
         c.write(offset)
-    _goKqueue(fd, select.KQ_FILTER_WRITE, writer)
+    _goWrite(fd, writer)
     return c.read
 
 def goClose(fd):
     "Close the fd and do kqueue cleanup"
     assert fd != -1 and fd is not None
+    # file descriptors are reused instantly, so we need to remove any left overs
+    _goClose(fd)
     os.close(fd)
 
-    # file descriptors are reused instantly, so we need to remove any left overs
-    for key in (fd, select.KQ_FILTER_WRITE), (fd, select.KQ_FILTER_READ):
-        if key in io:
-            io.pop(key)
-        if key in ioChanges:
-            del ioChanges[key]
-
-
-# fire up kqueue
-kq = select.kqueue()
 io = {} # callbacks added here must never switch greenlet
 ioChanges = {}
 
-def _kqueueRunner():
-    "Add changes and poll for events, blocking if scheduler queue is empty"
-    timeout = 0 if queue else None 
-    changes = ioChanges.values()
-    ioChanges.clear()
-    try:
-        for event in kq.control(changes, len(io), timeout):
-            assert not event.flags & select.KQ_EV_ERROR
-            key = event.ident, event.filter
-            callback = io.pop(key)(event.data, bool(event.flags & select.KQ_EV_EOF))
-            if callback:
-                assert key not in io
-                io[key] = callback
-            else:
-                ioChanges[key] = select.kevent(event.ident, event.filter, select.KQ_EV_DELETE)
-    except:
-        traceback.print_exc()
-        os._exit(2)
+if hasattr(select, 'epoll'):
+    epoll = select.epoll()
 
-    # add it back to the queue if we have more IO to do
-    if io:
-        queue.append(_kqueueRunner)
-    else:
-        _kqueueRunner.active = False
-_kqueueRunner.active = False
+    def _epollRunner():
+        timeout = 0 if queue else -1
+        try:
+            for fd, eventmask in epoll.poll(timeout):
+                assert not eventmask & select.EPOLLERR
+                assert not eventmask & select.EPOLLPRI
+                removeMask = 0
+                for mask in (select.EPOLLIN, select.EPOLLOUT):
+                    key = fd, mask
+                    if eventmask & mask:
+                        callback = io.pop(key)(32768, eventmask & select.EPOLLHUP)
+                        if callback:
+                            assert key not in io
+                            io[key] = callback
+                        else:
+                            removeMask |= mask
+                if removeMask:
+                    ioChanges[fd] ^= removeMask
+                    epoll.modify(fd, ioChanges[fd])
+        except:
+            traceback.print_exc()
+            os._exit(2)
 
-def _goKqueue(ident, filter, m):
-    "Add a filter for a fd with a callback"
-    assert type(ident) == int and ident != -1
-    key = ident, filter
-    assert key not in io
+        # add it back to the queue if we have more IO to do
+        if io:
+            queue.append(_epollRunner)
+        else:
+            _epollRunner.active = False
+    _epollRunner.active = False
 
-    ioChanges[key] = select.kevent(ident, filter, select.KQ_EV_ADD | select.KQ_EV_ENABLE)
-    io[key] = m
+    def _goEpoll(ident, mask, m):
+        if ident not in ioChanges:
+            ioChanges[ident] = mask
+            epoll.register(ident, mask)
+        else:
+            ioChanges[ident] = eventmask = ioChanges[ident] | mask
+            epoll.modify(ident, eventmask)
+        io[ident, mask] = m
 
-    # add the kqueue runner to the scheduler queue if it's not already there
-    if not _kqueueRunner.active:
-        _kqueueRunner.active = True
-        queue.append(_kqueueRunner)
+        if not _epollRunner.active:
+            _epollRunner.active = True
+            queue.append(_epollRunner)
+
+    _goWrite = lambda fd, m:_goEpoll(fd, select.EPOLLOUT, m)
+    _goRead  = lambda fd, m:_goEpoll(fd, select.EPOLLIN,  m)
+
+    def _goClose(fd):
+        if fd in ioChanges:
+            epoll.unregister(fd)
+            del ioChanges[fd]
+            for key in (fd, select.EPOLLIN), (fd, select.EPOLLOUT):
+                if key in ioChanges:
+                    del ioChanges[key]
+
+elif hasattr(select, 'kqueue'):
+    import patch_kqueue # kqueue is broken in python <=2.6. This will fix it using ctypes
+
+    kq = select.kqueue()
+
+    def _kqueueRunner():
+        "Add changes and poll for events, blocking if scheduler queue is empty"
+        timeout = 0 if queue else None 
+        changes = ioChanges.values()
+        ioChanges.clear()
+        try:
+            for event in kq.control(changes, len(io), timeout):
+                assert not event.flags & select.KQ_EV_ERROR
+                key = event.ident, event.filter
+                callback = io.pop(key)(event.data, bool(event.flags & select.KQ_EV_EOF))
+                if callback:
+                    assert key not in io
+                    io[key] = callback
+                else:
+                    ioChanges[key] = select.kevent(event.ident, event.filter, select.KQ_EV_DELETE)
+        except:
+            traceback.print_exc()
+            os._exit(2)
+
+        # add it back to the queue if we have more IO to do
+        if io:
+            queue.append(_kqueueRunner)
+        else:
+            _kqueueRunner.active = False
+    _kqueueRunner.active = False
+
+    def _goKqueue(ident, filter, m):
+        "Add a filter for a fd with a callback"
+        assert type(ident) == int and ident != -1
+        key = ident, filter
+        assert key not in io
+
+        ioChanges[key] = select.kevent(ident, filter, select.KQ_EV_ADD | select.KQ_EV_ENABLE)
+        io[key] = m
+
+        # add the kqueue runner to the scheduler queue if it's not already there
+        if not _kqueueRunner.active:
+            _kqueueRunner.active = True
+            queue.append(_kqueueRunner)
+
+    _goWrite = lambda fd, m:_goEpoll(fd, select.KQ_FILTER_WRITE, m)
+    _goRead  = lambda fd, m:_goEpoll(fd, select.KQ_FILTER_READ,  m)
+
+    def _goClose(fd):
+        for key in (fd, select.KQ_FILTER_WRITE), (fd, select.KQ_FILTER_READ):
+            if key in io:
+                io.pop(key)
+            if key in ioChanges:
+                del ioChanges[key]
 
 """
 BaseHTTPServer/SocketServer expect to work with file objects. All IO operations

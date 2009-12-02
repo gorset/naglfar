@@ -67,6 +67,7 @@ class Tests(unittest.TestCase):
         @go
         def runner():
             blob = c.readline()
+            self.assertEquals(blob, 'foobar\n')
             c.write('hello: ' + blob)
 
         d.write('foobar\n')
