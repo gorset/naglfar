@@ -75,7 +75,7 @@ class ScheduledMixIn:
     def process_request(self, request, client_address):
         # the BaseHTTPServer framework uses only the "file protocol" for a file
         # descriptors, so we put the request in an object which will wrap all
-        # IO calls using kqueue and schedule/Channel.
+        # IO calls using kqueue/epoll and schedule/Channel.
         request = DummySocket(ScheduledFile.fromSocket(request))
         @go
         def runner():
@@ -98,7 +98,7 @@ class ScheduledMixIn:
                 try:
                     client = self.socket.accept()
                 except socket.error, e:
-                    if e.errno == errno.EAGAIN: # either a kernel bug or a race condition
+                    if e.errno == errno.EAGAIN: # either epoll, a kernel bug or a race condition
                         break
                 self.acceptStream.write(client)
             if not eof:
@@ -229,14 +229,6 @@ class Channel(object):
             self.waiting.append(getcurrent().switch)
             scheduler.switch()
         return self.q.popleft()
-
-"""
-KQueue is a great event notification system that can be used to do asynchronous
-IO. Three methods are implemented on top of kqueue, for reading, writing and
-closing the sockets. KQueue is only supported on *BSD and darwin/OSX, but these
-methods should be easily implemented using another event notification
-systems like select or epoll.
-"""
 
 def goRead(fd, n=None):
     "Read n bytes, or the next chunk if n is None"
@@ -377,7 +369,6 @@ elif hasattr(select, 'kqueue'):
         ioChanges[key] = select.kevent(ident, filter, select.KQ_EV_ADD | select.KQ_EV_ENABLE)
         io[key] = m
 
-        # add the kqueue runner to the scheduler queue if it's not already there
         if not _kqueueRunner.active:
             _kqueueRunner.active = True
             queue.append(_kqueueRunner)
