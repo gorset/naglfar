@@ -115,6 +115,7 @@ the same time we will continuously connect a client to get the status.
 """
 
 def testScheduledServer(n):
+    "test http server with n clients"
     # start web server at a random port
     class ScheduledHTTPServer(ScheduledMixIn, BaseHTTPServer.HTTPServer):
         pass
@@ -175,9 +176,8 @@ of the cpu usage.
 The next step would perhaps be to look into optimizing BaseHTTPServer. A faster
 language or implementation should make it possible to get closer to the 3.344s
 theretical limit using the same design. It's also likely that the kernel itself
-could be optimized for this kind of work - after all, this example run was run
-on a standard snow leopard with only the maxmium number of descriptors
-increased.
+could be optimized for this kind of work. The only tuning performed was
+increasing the maximum number of descriptors.
 
 Finally, the code to make it all work:
 """
@@ -247,7 +247,8 @@ def goRead(fd, n=None):
 
     def reader(bytesReady, eof):
         if bytesReady:
-            buffer.extend(os.read(fd, bytesReady if n is None else min(bytesReady, n - len(buffer)))) # read maximum or the bytes remaing
+            # read maxmium or the bytes remaing
+            buffer.extend(os.read(fd, bytesReady if n is None else min(bytesReady, n - len(buffer))))
             if not eof and n is not None and len(buffer) < n:
                 return reader
         c.write(str(buffer))
