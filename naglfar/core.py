@@ -23,17 +23,18 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-Here's a implementation of a scheduler/Channel library which can be used to
+Here's an implementation of a scheduler/Channel library which can be used to
 implement servers using coroutines and asynchronous IO. It provides a
 SocketServer mix-in which can be combined with BaseHTTPServer to implement a
-comet enabled server which can support a high number of concurrent connection.
+comet enabled server which can support a high number of concurrent connections.
 
-To demonstrate the capabilities of the library, a example of a handler for
-BaseHTTPServer is shown to tackle the c10k problem in the comet spirit.
+To demonstrate the capabilities of the library, an example of a handler for
+BaseHTTPServer is shown to tackle the c10k problem, and to be an excellent
+comet enabled server.
 
 Please note that there's nothing strange with the handler implementation. By
 providing a thread or fork compatible implementation of Channel, it should be
-possible to run it with the builtin forking or threading SocetServer mixins.
+possible to run it with the builtin forking or threading SocketServer mixins.
 """
 import BaseHTTPServer
 
@@ -110,15 +111,15 @@ class ScheduledMixIn:
 
 """
 To test this we will first start the server, create N clients that will
-connect and wait, then finally connect with a client that notify everyone. At
+connect and wait, then finally connect with a client that notifies everyone. At
 the same time we will continuously connect a client to get the status. 
 """
 
 def testScheduledServer(n):
     "test http server with n clients"
-    # start web server at a random port
     class ScheduledHTTPServer(ScheduledMixIn, BaseHTTPServer.HTTPServer):
         pass
+    # start web server at a random port
     httpd = ScheduledHTTPServer(('', 0), TestHandler)
     address = httpd.server_name, httpd.server_port
     go(httpd.serve_forever)
