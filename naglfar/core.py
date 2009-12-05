@@ -198,7 +198,14 @@ from collections import deque, namedtuple
 queue = deque()
 def go(callable, *args, **vargs):
     "Create a new coroutine for callable(*args, **vargs)"
-    g = greenlet(partial(callable, *args, **vargs), scheduler) # scheduler must be parent
+    def runner():
+        try:
+            callable(*args, **vargs)
+        except:
+            traceback.print_exc()
+            os._exit(3)
+        scheduler.switch() # switch back the scheduler when done
+    g = greenlet(runner, scheduler) # scheduler must be parent
     queue.append(g.switch)
 
 def scheduler():
