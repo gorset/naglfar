@@ -121,7 +121,7 @@ def testScheduledServer(n):
         pass
     # start web server at a random port
     httpd = ScheduledHTTPServer(('', 0), TestHandler)
-    address = httpd.server_name, httpd.server_port
+    address = 'localhost', httpd.server_port
     go(httpd.serve_forever)
 
     def httpClientGet(client, path):
@@ -278,118 +278,130 @@ def goClose(fd):
     _goClose(fd)
     os.close(fd)
 
-io = {} # callbacks added here must never switch greenlet
-ioChanges = {}
-
 if hasattr(select, 'epoll'):
     epoll = select.epoll()
+    io = {}
+    ioState = {}
 
-    def _epollRunner():
-        timeout = 0 if queue else -1
-        try:
-            for fd, eventmask in epoll.poll(timeout):
-                assert not eventmask & select.EPOLLERR
-                assert not eventmask & select.EPOLLPRI
-                removeMask = 0
-                for mask in (select.EPOLLIN, select.EPOLLOUT):
-                    key = fd, mask
-                    if eventmask & mask:
-                        callback = io.pop(key)(32768, eventmask & select.EPOLLHUP)
-                        if callback:
-                            assert key not in io
-                            io[key] = callback
-                        else:
-                            removeMask |= mask
-                if removeMask:
-                    ioChanges[fd] ^= removeMask
-                    epoll.modify(fd, ioChanges[fd])
-        except:
-            traceback.print_exc()
-            os._exit(2)
-
-        # add it back to the queue if we have more IO to do
-        if io:
-            queue.append(_epollRunner)
-        else:
-            _epollRunner.active = False
-    _epollRunner.active = False
+    def _ioCore():
+        for fd, eventmask in epoll.poll(0 if queue else -1):
+            assert not eventmask & select.EPOLLERR
+            assert not eventmask & select.EPOLLPRI
+            removeMask = 0
+            for mask in (select.EPOLLIN, select.EPOLLOUT):
+                key = fd, mask
+                if eventmask & mask:
+                    callback = io.pop(key)(32768, eventmask & select.EPOLLHUP)
+                    if callback:
+                        assert key not in io
+                        io[key] = callback
+                    else:
+                        removeMask |= mask
+            if removeMask:
+                ioState[fd] ^= removeMask
+                epoll.modify(fd, ioState[fd])
+        return bool(io)
 
     def _goEpoll(ident, mask, m):
-        if ident not in ioChanges:
-            ioChanges[ident] = mask
+        if ident not in ioState:
+            ioState[ident] = mask
             epoll.register(ident, mask)
         else:
-            ioChanges[ident] = eventmask = ioChanges[ident] | mask
+            ioState[ident] = eventmask = ioState[ident] | mask
             epoll.modify(ident, eventmask)
         io[ident, mask] = m
-
-        if not _epollRunner.active:
-            _epollRunner.active = True
-            queue.append(_epollRunner)
+        _ioRunner.activate()
 
     _goWrite = lambda fd, m:_goEpoll(fd, select.EPOLLOUT, m)
     _goRead  = lambda fd, m:_goEpoll(fd, select.EPOLLIN,  m)
 
     def _goClose(fd):
-        if fd in ioChanges:
-            del ioChanges[fd]
+        if fd in ioState:
+            del ioState[fd]
             for key in (fd, select.EPOLLIN), (fd, select.EPOLLOUT):
-                if key in ioChanges:
-                    del ioChanges[key]
+                if key in io:
+                    del io[key]
 
 elif hasattr(select, 'kqueue'):
-    import patch_kqueue # kqueue is broken in python <=2.6. This will fix it using ctypes
+    import patch_kqueue # kqueue is broken in python <=2.6.4. This will fix it using ctypes
 
     kq = select.kqueue()
+    io = {}
+    ioChanges = {}
 
-    def _kqueueRunner():
+    def _ioCore():
         "Add changes and poll for events, blocking if scheduler queue is empty"
-        timeout = 0 if queue else None 
         changes = ioChanges.values()
         ioChanges.clear()
-        try:
-            for event in kq.control(changes, len(io), timeout):
-                assert not event.flags & select.KQ_EV_ERROR
-                key = event.ident, event.filter
-                callback = io.pop(key)(event.data, bool(event.flags & select.KQ_EV_EOF))
-                if callback:
-                    assert key not in io
-                    io[key] = callback
-                else:
-                    ioChanges[key] = select.kevent(event.ident, event.filter, select.KQ_EV_DELETE)
-        except:
-            traceback.print_exc()
-            os._exit(2)
-
-        # add it back to the queue if we have more IO to do
-        if io:
-            queue.append(_kqueueRunner)
-        else:
-            _kqueueRunner.active = False
-    _kqueueRunner.active = False
-
-    def _goKqueue(ident, filter, m):
-        "Add a filter for a fd with a callback"
-        assert type(ident) == int and ident != -1
-        key = ident, filter
-        assert key not in io
-
-        ioChanges[key] = select.kevent(ident, filter, select.KQ_EV_ADD | select.KQ_EV_ENABLE)
-        io[key] = m
-
-        if not _kqueueRunner.active:
-            _kqueueRunner.active = True
-            queue.append(_kqueueRunner)
-
-    _goWrite = lambda fd, m:_goKqueue(fd, select.KQ_FILTER_WRITE, m)
-    _goRead  = lambda fd, m:_goKqueue(fd, select.KQ_FILTER_READ,  m)
-
+        for event in kq.control(changes, len(io), 0 if queue else None):
+            assert not event.flags & select.KQ_EV_ERROR
+            key = event.ident, event.filter
+            callback = io.pop(key)(event.data, bool(event.flags & select.KQ_EV_EOF))
+            if callback:
+                assert key not in io
+                io[key] = callback
+            else:
+                ioChanges[key] = select.kevent(event.ident, event.filter, select.KQ_EV_DELETE)
+        return bool(io)
+    def _goRead(fd, m):
+        ioChanges[fd, select.KQ_FILTER_READ] = select.kevent(fd, select.KQ_FILTER_READ, select.KQ_EV_ADD | select.KQ_EV_ENABLE)
+        io[fd, select.KQ_FILTER_READ] = m
+        _ioRunner.activate()
+    def _goWrite(fd, m):
+        ioChanges[fd, select.KQ_FILTER_WRITE] = select.kevent(fd, select.KQ_FILTER_WRITE, select.KQ_EV_ADD | select.KQ_EV_ENABLE)
+        io[fd, select.KQ_FILTER_WRITE] = m
+        _ioRunner.activate()
     def _goClose(fd):
         for key in (fd, select.KQ_FILTER_WRITE), (fd, select.KQ_FILTER_READ):
             if key in io:
-                io.pop(key)
+                del io[key]
             if key in ioChanges:
                 del ioChanges[key]
+
+else: # fallback to select
+    print 'using select'
+    ioRead = {}
+    ioWrite = {}
+    
+    def _ioCore():
+        x, y, z = select.select(list(ioRead), list(ioWrite), [], 0 if queue else None)
+        for fds, l in ((x, ioRead), (y, ioWrite)):
+            for fd in fds:
+                callback = l.pop(fd)(32768, False)
+                if callback:
+                    assert fd not in l
+                    l[fd] = callback
+        return bool(ioRead or ioWrite)
+    def _goRead(fd, m):
+        ioRead[fd] = m
+        _ioRunner.activate()
+    def _goWrite(fd, m):
+        ioWrite[fd] = m
+        _ioRunner.activate()
+    def _goClose(fd):
+        if fd in ioWrite:
+            del ioWrite[fd]
+        if fd in ioRead:
+            del ioRead[fd]
+
+def _ioRunner():
+    try:
+        hasMore = _ioCore()
+    except:
+        traceback.print_exc()
+        os._exit(2)
+
+    if hasMore:
+        queue.append(_ioRunner)
+    else:
+        _ioRunner.active = False
+_ioRunner.active = False
+def _ioActivate():
+    if not _ioRunner.active:
+        _ioRunner.active = True
+        queue.append(_ioRunner)
+_ioRunner.activate = _ioActivate
+
 
 """
 BaseHTTPServer/SocketServer expect to work with file objects. All IO operations

@@ -30,6 +30,8 @@ from naglfar import *
 class Tests(unittest.TestCase):
     def _pair(self):
         a, b = socket.socketpair()
+        a.setblocking(False)
+        b.setblocking(False)
         c, d = ScheduledFile.fromSocket(a), ScheduledFile.fromSocket(b)
         c.autoflush = d.autoflush = True
         return c, d
