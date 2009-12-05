@@ -199,11 +199,7 @@ queue = deque()
 def go(callable, *args, **vargs):
     "Create a new coroutine for callable(*args, **vargs)"
     def runner():
-        try:
-            callable(*args, **vargs)
-        except:
-            traceback.print_exc()
-            os._exit(3)
+        callable(*args, **vargs)
         scheduler.switch() # switch back the scheduler when done
     g = greenlet(runner, scheduler) # scheduler must be parent
     queue.append(g.switch)
