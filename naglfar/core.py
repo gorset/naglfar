@@ -121,7 +121,7 @@ def testScheduledServer(n):
         pass
     # start web server at a random port
     httpd = ScheduledHTTPServer(('', 0), TestHandler)
-    address = 'localhost', httpd.server_port
+    address = httpd.server_name, httpd.server_port
     go(httpd.serve_forever)
 
     def httpClientGet(client, path):
@@ -355,7 +355,6 @@ elif hasattr(select, 'kqueue'):
                 del ioChanges[key]
 
 else: # fallback to select
-    print 'using select'
     ioRead = {}
     ioWrite = {}
     
