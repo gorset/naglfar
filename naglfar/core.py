@@ -281,13 +281,12 @@ if hasattr(select, 'epoll'):
 
     def _ioCore():
         for fd, eventmask in epoll.poll(0 if queue else -1):
-            assert not eventmask & select.EPOLLERR
             assert not eventmask & select.EPOLLPRI
             removeMask = 0
             for mask in (select.EPOLLIN, select.EPOLLOUT):
                 key = fd, mask
                 if eventmask & mask:
-                    callback = io.pop(key)(32768, eventmask & select.EPOLLHUP)
+                    callback = io.pop(key)(32768, bool(eventmask & (select.EPOLLHUP | select.EPOLLERR)))
                     if callback:
                         assert key not in io
                         io[key] = callback
