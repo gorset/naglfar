@@ -77,7 +77,7 @@ class ScheduledMixIn:
         # the BaseHTTPServer framework uses only the "file protocol" for a file
         # descriptors, so we put the request in an object which will wrap all
         # IO calls using kqueue/epoll and schedule/Channel.
-        request = DummySocket(ScheduledFile.fromSocket(request))
+        request = ScheduledFile.fromSocket(request)
         @go
         def runner():
             self.finish_request(request, client_address)
@@ -502,11 +502,8 @@ class ScheduledFile(object):
                 break
             yield line
 
-# A dummy socket, with the only objective of returing the ScheduledFile object
-# when made into a file.
-DummySocket = namedtuple('DummySocket', 'file')
-DummySocket.makefile = lambda self,*x,**y:self.file
-DummySocket.close = lambda self:self.file.close()
+    def makefile(self, *args, **vargs):
+        return self
 
 if __name__ == "__main__":
     import sys
