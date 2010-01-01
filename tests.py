@@ -26,6 +26,7 @@ import sys
 import socket
 import unittest
 from naglfar import *
+from naglfar.sendfile import sendfile
 
 class Tests(unittest.TestCase):
     def _pair(self):
@@ -113,6 +114,66 @@ class Tests(unittest.TestCase):
 
         c.close()
         self.assertEquals('c', d.read())
+
+    def testSendfile1(self):
+        fd = open(__file__)
+        data = fd.read()
+        a, b = socket.socketpair()
+        n = sendfile(fd.fileno(), a.fileno(), 0, 42)
+        self.assertEquals(n, 42)
+        self.assertEquals(data[:42], b.recv(1024))
+
+        n = sendfile(fd.fileno(), b.fileno(), len(data) - 10, 42)
+        self.assertEquals(n, 10)
+        self.assertEquals(data[len(data) - 10:], a.recv(1024))
+
+        n = sendfile(fd.fileno(), b.fileno(), len(data), 42)
+        self.assertEquals(n, 0)
+
+        n = sendfile(fd.fileno(), b.fileno(), 0, 0)
+        self.assertEquals(n, len(data))
+        self.assertEquals(data[:2048], a.recv(2048))
+
+    def testSendfile2(self):
+        fd = open(__file__)
+        data = fd.read(10)
+        dataM = 'XX' + data + 'YY'
+        a, b = socket.socketpair()
+        n = sendfile(fd.fileno(), a.fileno(), 0, 10, ['XX'], ['YY'])
+
+        output = b.recv(1024)
+        self.assertEquals(n, len(output))
+        self.assertEquals(n, len(dataM))
+        self.assertEquals(dataM, output)
+
+    def testSendfile3(self):
+        fd = open(__file__)
+
+        a, b = socket.socketpair()
+        n = sendfile(fd.fileno(), a.fileno(), 0, 0)
+        b.recv(1)
+        b.close()
+        try:
+            n = sendfile(fd.fileno(), a.fileno(), 0, 0)
+        except socket.error, e:
+            self.assertEquals(e.errno, 57)
+        else:
+            self.assertTrue(False, 'exception not raised')
+
+    def testSendfile4(self):
+        fd = open(__file__)
+        a, b = socket.socketpair()
+        a.setblocking(False)
+        b.setblocking(False)
+        while True:
+            n = sendfile(fd.fileno(), a.fileno(), 0, 0)
+            if not n:
+                break
+        n = sendfile(fd.fileno(), a.fileno(), 0, 0)
+        self.assertEquals(n, 0)
+        fd.close()
+        a.close()
+        b.close()
 
 if __name__ == "__main__":
     unittest.main()
