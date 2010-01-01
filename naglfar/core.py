@@ -482,10 +482,31 @@ class ScheduledFile(object):
 
     def read(self, n=-1):
         "read n bytes or until eof"
-        self.incoming+= goRead(self.fd, n - len(self.incoming) if n != -1 else None)()
-        data = str(self.incoming[:n])
-        del self.incoming[:n]
+        if n == -1 or n > len(self.incoming):
+            self.incoming += goRead(self.fd, n - len(self.incoming) if n != -1 else None)()
+        data = str(self.incoming[:n if n != -1 else len(self.incoming)])
+        del self.incoming[:len(data)]
         return data
+
+    def readUntil(self, txt, includingTxt=True):
+        "read until txt or eof"
+        def reader():
+            if self.incoming:
+                chunk = str(self.incoming)
+                del self.incoming[:]
+                yield chunk
+
+            while True:
+                yield goRead(self.fd)()
+
+        for chunk in readUntil(reader().next, self.incoming.extend, txt):
+            yield chunk
+
+        if includingTxt:
+            if self.incoming:
+                assert self.incoming.startswith(txt)
+                del self.incoming[:len(txt)]
+                yield txt
 
     def close(self, flush=True):
         if self.fd is None:
@@ -504,6 +525,30 @@ class ScheduledFile(object):
 
     def makefile(self, *args, **vargs):
         return self
+
+def readUntil(next, pushback, txt):
+    result = bytearray()
+
+    while True:
+        pos = result.find(txt)
+        if pos != -1:
+            rest = result[pos:]
+            if rest:
+                pushback(str(rest))
+                del result[pos:]
+            if result:
+                yield str(result)
+            return
+        elif len(txt) < len(result):
+            yield str(result[:-len(txt)])
+            del result[:-len(txt)]
+
+        chunk = next()
+        if not chunk:
+            if result:
+                yield str(result)
+                return
+        result += chunk
 
 if __name__ == "__main__":
     import sys

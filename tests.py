@@ -91,5 +91,28 @@ class Tests(unittest.TestCase):
         for i in xrange(10):
             testScheduledServer(i)
 
+    def testUntil(self):
+        c, d = self._pair()
+        c.write('aafoobar')
+        self.assertEquals('aafoobar', ''.join(d.readUntil('foobar')))
+        c.write('aaa')
+        self.assertEquals('a', ''.join(d.readUntil('a')))
+        self.assertEquals('a', ''.join(d.readUntil('a')))
+        self.assertEquals('', ''.join(d.readUntil('')))
+        self.assertEquals('a', ''.join(d.readUntil('a')))
+
+        c.write('a')
+        self.assertEquals('', ''.join(d.readUntil('a', False)))
+        self.assertEquals('', ''.join(d.readUntil('a', False)))
+        self.assertEquals('', ''.join(d.readUntil('a', False)))
+        self.assertEquals('a', d.read(1))
+
+        c.write('abc')
+        self.assertEquals('a', ''.join(d.readUntil('b', False)))
+        self.assertEquals('b', ''.join(d.readUntil('c', False)))
+
+        c.close()
+        self.assertEquals('c', d.read())
+
 if __name__ == "__main__":
     unittest.main()
