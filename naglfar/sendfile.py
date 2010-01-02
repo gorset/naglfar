@@ -49,28 +49,7 @@ class SfHdtr(ctypes.Structure):
         b = (Iovecs*len(trailers))(*list(Iovecs(ctypes.cast(i, ctypes.c_void_p), len(i)) for i in trailers)) if trailers else None
         return SfHdtr(a, len(headers), b, len(trailers)) if headers or trailers else None
 
-if sys.platform == 'darwin':
-    # osx
-    # sendfile(int fd, int s, off_t offset, off_t *len, struct sf_hdtr *hdtr, int flags);
-    _sendfile.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(SfHdtr), ctypes.c_int]
-
-    def _sendfile_wrapped(fd, s, offset, nbytes, headers=None, trailers=None):
-        if headers: # darwin has some kinks
-            nbytes += sum(len(i) for i in headers)
-        x = ctypes.c_uint64(nbytes)
-        return _sendfile(fd, s, offset, x, SfHdtr.make(headers, trailers), 0), x
-
-else:
-    # freebsd
-    # sendfile(int fd, int s, off_t offset, size_t nbytes, struct sf_hdtr *hdtr, off_t *sbytes, int flags);
-    _sendfile.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_size_t, ctypes.POINTER(SfHdtr), ctypes.POINTER(ctypes.c_uint64), ctypes.c_int]
-
-    def _sendfile_wrapped(fd, s, offset, nbytes, headers=None, trailers=None):
-        x = ctypes.c_uint64()
-        return _sendfile(fd, s, offset, nbytes, SfHdtr.make(headers, trailers), x, 0), x
-
-def sendfile(fd, s, offset, nbytes, headers=None, trailers=None):
-    r, x = _sendfile_wrapped(fd, s, offset, nbytes, headers, trailers)
+def _sendfile_bsd(r, x):
     if r == -1:
         number = ctypes.get_errno()
         if number == errno.EAGAIN and x.value: # return number of bytes sent if specified
@@ -78,3 +57,39 @@ def sendfile(fd, s, offset, nbytes, headers=None, trailers=None):
         assert not x.value
         raise OSError(number, os.strerror(number))
     return x.value
+
+if sys.platform == 'darwin':
+    # osx
+    # sendfile(int fd, int s, off_t offset, off_t *len, struct sf_hdtr *hdtr, int flags);
+    _sendfile.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(SfHdtr), ctypes.c_int]
+
+    def sendfile(fd, s, offset, nbytes, headers=None, trailers=None):
+        if headers: # darwin has some kinks
+            nbytes += sum(len(i) for i in headers)
+        x = ctypes.c_uint64(nbytes)
+        r = _sendfile(fd, s, offset, x, SfHdtr.make(headers, trailers), 0)
+        return _sendfile_bsd(r, x)
+
+elif sys.platform == 'linux2':
+    # linux
+    # size_t sendfile(int out_fd, int in_fd, off_t *offset, size_t count);
+    _sendfile.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_uint64), ctypes.c_size_t]
+
+    def sendfile(fd, s, offset, nbytes, headers=None, trailers=None):
+        assert not (headers and trailers), 'headers and trailers are not supported on linux'
+        x = ctypes.c_uint64(offset)
+        r = _sendfile(s, fd, x, nbytes)
+        if r == -1:
+            number = ctypes.get_errno()
+            raise OSError(number, os.strerror(number))
+        return r
+
+else:
+    # freebsd
+    # sendfile(int fd, int s, off_t offset, size_t nbytes, struct sf_hdtr *hdtr, off_t *sbytes, int flags);
+    _sendfile.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_size_t, ctypes.POINTER(SfHdtr), ctypes.POINTER(ctypes.c_uint64), ctypes.c_int]
+
+    def sendfile(fd, s, offset, nbytes, headers=None, trailers=None):
+        x = ctypes.c_uint64()
+        r = _sendfile(fd, s, offset, nbytes, SfHdtr.make(headers, trailers), x, 0)
+        return _sendfile_bsd(r, x)

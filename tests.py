@@ -22,6 +22,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
+import os
 import sys
 import errno
 import socket
@@ -136,43 +137,50 @@ class Tests(unittest.TestCase):
 
         n = sendfile(fd.fileno(), b.fileno(), len(data), 42)
         self.assertEquals(n, 0)
+        fd.close()
 
-        n = sendfile(fd.fileno(), b.fileno(), 0, 0)
-        self.assertTrue(n > 0)
-        self.assertEquals(data[:n], a.recv(n + 1024))
+    if sys.platform != 'linux2':
+        def testSendfileZero(self):
+            a, b = self._pair2()
+            fd = open(__file__)
+            data = fd.read()
+            n = sendfile(fd.fileno(), b.fileno(), 0, 0)
+            self.assertTrue(n > 0)
+            self.assertEquals(data[:n], a.recv(n + 1024))
 
-    def testSendfile2(self):
-        fd = open(__file__)
-        data = fd.read(10)
-        dataM = 'XX' + data + 'YY'
-        a, b = self._pair2()
-        n = sendfile(fd.fileno(), a.fileno(), 0, 10, ['XX'], ['YY'])
+        def testSendfileHeaders(self):
+            fd = open(__file__)
+            data = fd.read(10)
+            dataM = 'XX' + data + 'YY'
+            a, b = self._pair2()
+            n = sendfile(fd.fileno(), a.fileno(), 0, 10, ['XX'], ['YY'])
 
-        output = b.recv(1024)
-        self.assertEquals(n, len(output))
-        self.assertEquals(n, len(dataM))
-        self.assertEquals(dataM, output)
+            output = b.recv(1024)
+            self.assertEquals(n, len(output))
+            self.assertEquals(n, len(dataM))
+            self.assertEquals(dataM, output)
 
     def testSendfile3(self):
         fd = open(__file__)
 
         a, b = self._pair2()
-        n = sendfile(fd.fileno(), a.fileno(), 0, 0)
+        n = sendfile(fd.fileno(), a.fileno(), 0, 1)
         b.recv(1)
         b.close()
         try:
-            n = sendfile(fd.fileno(), a.fileno(), 0, 0)
+            n = sendfile(fd.fileno(), a.fileno(), 0, 1)
         except OSError, e:
-            self.assertEquals(e.errno, errno.ENOTCONN)
+            self.assertTrue(e.errno in (errno.ENOTCONN, errno.EPIPE)) # linux will throw EPIPE
         else:
             self.assertTrue(False, 'exception not raised')
 
     def testSendfile4(self):
         fd = open(__file__)
         a, b = self._pair2()
+        total = os.fstat(fd.fileno()).st_size
         while True:
             try:
-                n = sendfile(fd.fileno(), a.fileno(), 0, 0)
+                n = sendfile(fd.fileno(), a.fileno(), 0, total)
                 self.assertTrue(n > 0)
             except OSError, e:
                 self.assertEquals(e.errno, errno.EAGAIN)
