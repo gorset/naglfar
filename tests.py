@@ -155,7 +155,7 @@ class Tests(unittest.TestCase):
         b.close()
         try:
             n = sendfile(fd.fileno(), a.fileno(), 0, 0)
-        except socket.error, e:
+        except OSError, e:
             self.assertEquals(e.errno, 57)
         else:
             self.assertTrue(False, 'exception not raised')
@@ -174,6 +174,29 @@ class Tests(unittest.TestCase):
         fd.close()
         a.close()
         b.close()
+
+    def testSendfile5(self):
+        a, b = self._pair()
+        fd = open(__file__)
+        data = open(__file__).read()
+
+        @go
+        def r():
+            n = a.sendfile(fd.fileno(), nbytes=len(data))
+            self.assertEquals(n, len(data))
+            a.close()
+        self.assertEquals(b.read(), data)
+        b.close()
+
+        fd = open(__file__)
+        c, d = self._pair()
+        @go
+        def r():
+            n = c.sendfile(fd.fileno(), 10, len(data)-10)
+            self.assertEquals(n, len(data) - 10)
+            c.close()
+        self.assertEquals(d.read(), data[10:])
+        d.close()
 
 if __name__ == "__main__":
     unittest.main()

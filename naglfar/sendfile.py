@@ -24,6 +24,7 @@ import sys
 import time
 import errno
 import ctypes
+import ctypes.util
 import socket
 
 _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
@@ -64,7 +65,7 @@ if sys.platform == 'darwin':
             number = ctypes.get_errno()
             if number == errno.EAGAIN:
                 return x.value
-            raise socket.error(number, os.strerror(number))
+            raise OSError(number, os.strerror(number))
         return x.value
 
 else:
@@ -79,5 +80,5 @@ else:
             number = ctypes.get_errno()
             if number == errno.EAGAIN:
                 return x.value
-            raise socket.error(number, os.strerror(number))
+            raise OSError(number, os.strerror(number))
         return x.value

@@ -242,7 +242,10 @@ def goRead(fd, n=None):
     def reader(bytesReady, eof):
         if bytesReady:
             # read maxmium or the bytes remaing
-            data = os.read(fd, bytesReady if n is None else min(bytesReady, n - len(buffer)))
+            try:
+                data = os.read(fd, bytesReady if n is None else min(bytesReady, n - len(buffer)))
+            except OSError, e:
+                data = ''
             eof = not data
             buffer.extend(data)
             if not eof and n is not None and len(buffer) < n:
@@ -259,11 +262,36 @@ def goWrite(fd, data):
     def writer(bytesReady, eof):
         offset = o['offset']
         if not eof:
-            offset += os.write(fd, str(data[offset:offset+bytesReady]))
+            try:
+                offset += os.write(fd, str(data[offset:offset+bytesReady]))
+            except OSError, e:
+                pass # FIXME: do more here?
             if offset < len(data):
                 o['offset'] = offset
                 return writer
         c.write(offset)
+    _goWrite(fd, writer)
+    return c.read
+
+def goSendfile(fdFile, fd, offset, nbytes):
+    assert type(fd) == int
+    assert nbytes > 0
+    o = dict(offset=offset, nbytes=nbytes)
+    c = Channel()
+
+    def writer(bytesReady, eof):
+        if bytesReady and not eof:
+            try:
+                n = sendfile(fdFile, fd, o['offset'], min(bytesReady, o['nbytes']))
+            except OSError, e:
+                n = 0 # do more here?
+            o['offset'] += n
+            o['nbytes'] -= n
+            assert o['nbytes'] >= 0
+            if n and o['nbytes']:
+                return writer
+        c.write(o['offset'] - offset)
+
     _goWrite(fd, writer)
     return c.read
 
@@ -377,6 +405,8 @@ else: # fallback to select
             del ioWrite[fd]
         if fd in ioRead:
             del ioRead[fd]
+
+from sendfile import sendfile
 
 def _ioRunner():
     try:
@@ -525,6 +555,12 @@ class ScheduledFile(object):
 
     def makefile(self, *args, **vargs):
         return self
+
+    def sendfile(self, fd, offset=0, nbytes=0):
+        self.flush()
+        return goSendfile(fd, self.fd, offset, nbytes)()
+
+
 
 def readUntil(next, pushback, txt):
     result = bytearray()
