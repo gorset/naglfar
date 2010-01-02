@@ -245,6 +245,8 @@ def goRead(fd, n=None):
             try:
                 data = os.read(fd, bytesReady if n is None else min(bytesReady, n - len(buffer)))
             except OSError, e:
+                if e.errno == errno.EAGAIN: # potentation race condition
+                    return reader
                 data = ''
             eof = not data
             buffer.extend(data)
@@ -265,7 +267,7 @@ def goWrite(fd, data):
             try:
                 offset += os.write(fd, str(data[offset:offset+bytesReady]))
             except OSError, e:
-                pass # FIXME: do more here?
+                pass # FIXME: do more here? We will try again if we have data left
             if offset < len(data):
                 o['offset'] = offset
                 return writer
@@ -284,7 +286,9 @@ def goSendfile(fdFile, fd, offset, nbytes):
             try:
                 n = sendfile(fdFile, fd, o['offset'], min(bytesReady, o['nbytes']))
             except OSError, e:
-                n = 0 # do more here?
+                if e.errno == errno.EAGAIN:
+                    return writer
+                return # do more here?
             o['offset'] += n
             o['nbytes'] -= n
             assert o['nbytes'] >= 0
@@ -512,8 +516,14 @@ class ScheduledFile(object):
 
     def read(self, n=-1):
         "read n bytes or until eof"
-        if n == -1 or n > len(self.incoming):
-            self.incoming += goRead(self.fd, n - len(self.incoming) if n != -1 else None)()
+        if n == -1:
+            while True:
+                chunk = goRead(self.fd)()
+                if not chunk:
+                    break
+                self.incoming += chunk
+        elif n > len(self.incoming):
+            self.incoming += goRead(self.fd, n - len(self.incoming))()
         data = str(self.incoming[:n if n != -1 else len(self.incoming)])
         del self.incoming[:len(data)]
         return data

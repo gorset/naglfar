@@ -21,7 +21,6 @@
 
 import os
 import sys
-import time
 import errno
 import ctypes
 import ctypes.util
@@ -55,30 +54,27 @@ if sys.platform == 'darwin':
     # sendfile(int fd, int s, off_t offset, off_t *len, struct sf_hdtr *hdtr, int flags);
     _sendfile.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(SfHdtr), ctypes.c_int]
 
-    def sendfile(fd, s, offset, nbytes, headers=None, trailers=None):
+    def _sendfile_wrapped(fd, s, offset, nbytes, headers=None, trailers=None):
         if headers: # darwin has some kinks
             nbytes += sum(len(i) for i in headers)
         x = ctypes.c_uint64(nbytes)
-        t = time.time()
-        r = _sendfile(fd, s, offset, x, SfHdtr.make(headers, trailers), 0)
-        if r == -1:
-            number = ctypes.get_errno()
-            if number == errno.EAGAIN:
-                return x.value
-            raise OSError(number, os.strerror(number))
-        return x.value
+        return _sendfile(fd, s, offset, x, SfHdtr.make(headers, trailers), 0), x
 
 else:
     # freebsd
     # sendfile(int fd, int s, off_t offset, size_t nbytes, struct sf_hdtr *hdtr, off_t *sbytes, int flags);
     _sendfile.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_size_t, ctypes.POINTER(SfHdtr), ctypes.POINTER(ctypes.c_uint64), ctypes.c_int]
 
-    def sendfile(fd, s, offset, nbytes, headers=None, trailers=None):
+    def _sendfile_wrapped(fd, s, offset, nbytes, headers=None, trailers=None):
         x = ctypes.c_uint64()
-        r = _sendfile(fd, s, offset, nbytes, SfHdtr.make(headers, trailers), x, 0)
-        if r == -1:
-            number = ctypes.get_errno()
-            if number == errno.EAGAIN:
-                return x.value
-            raise OSError(number, os.strerror(number))
-        return x.value
+        return _sendfile(fd, s, offset, nbytes, SfHdtr.make(headers, trailers), x, 0), x
+
+def sendfile(fd, s, offset, nbytes, headers=None, trailers=None):
+    r, x = _sendfile_wrapped(fd, s, offset, nbytes, headers, trailers)
+    if r == -1:
+        number = ctypes.get_errno()
+        if number == errno.EAGAIN and x.value: # return number of bytes sent if specified
+            return x.value
+        assert not x.value
+        raise OSError(number, os.strerror(number))
+    return x.value

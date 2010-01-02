@@ -23,6 +23,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 import sys
+import errno
 import socket
 import unittest
 from naglfar import *
@@ -115,10 +116,16 @@ class Tests(unittest.TestCase):
         c.close()
         self.assertEquals('c', d.read())
 
+    def _pair2(self):
+        a, b = socket.socketpair()
+        a.setblocking(False)
+        b.setblocking(False)
+        return a, b
+
     def testSendfile1(self):
         fd = open(__file__)
         data = fd.read()
-        a, b = socket.socketpair()
+        a, b = self._pair2()
         n = sendfile(fd.fileno(), a.fileno(), 0, 42)
         self.assertEquals(n, 42)
         self.assertEquals(data[:42], b.recv(1024))
@@ -131,14 +138,14 @@ class Tests(unittest.TestCase):
         self.assertEquals(n, 0)
 
         n = sendfile(fd.fileno(), b.fileno(), 0, 0)
-        self.assertEquals(n, len(data))
-        self.assertEquals(data[:2048], a.recv(2048))
+        self.assertTrue(n > 0)
+        self.assertEquals(data[:n], a.recv(n + 1024))
 
     def testSendfile2(self):
         fd = open(__file__)
         data = fd.read(10)
         dataM = 'XX' + data + 'YY'
-        a, b = socket.socketpair()
+        a, b = self._pair2()
         n = sendfile(fd.fileno(), a.fileno(), 0, 10, ['XX'], ['YY'])
 
         output = b.recv(1024)
@@ -149,28 +156,27 @@ class Tests(unittest.TestCase):
     def testSendfile3(self):
         fd = open(__file__)
 
-        a, b = socket.socketpair()
+        a, b = self._pair2()
         n = sendfile(fd.fileno(), a.fileno(), 0, 0)
         b.recv(1)
         b.close()
         try:
             n = sendfile(fd.fileno(), a.fileno(), 0, 0)
         except OSError, e:
-            self.assertEquals(e.errno, 57)
+            self.assertEquals(e.errno, errno.ENOTCONN)
         else:
             self.assertTrue(False, 'exception not raised')
 
     def testSendfile4(self):
         fd = open(__file__)
-        a, b = socket.socketpair()
-        a.setblocking(False)
-        b.setblocking(False)
+        a, b = self._pair2()
         while True:
-            n = sendfile(fd.fileno(), a.fileno(), 0, 0)
-            if not n:
+            try:
+                n = sendfile(fd.fileno(), a.fileno(), 0, 0)
+                self.assertTrue(n > 0)
+            except OSError, e:
+                self.assertEquals(e.errno, errno.EAGAIN)
                 break
-        n = sendfile(fd.fileno(), a.fileno(), 0, 0)
-        self.assertEquals(n, 0)
         fd.close()
         a.close()
         b.close()
@@ -185,7 +191,10 @@ class Tests(unittest.TestCase):
             n = a.sendfile(fd.fileno(), nbytes=len(data))
             self.assertEquals(n, len(data))
             a.close()
-        self.assertEquals(b.read(), data)
+
+        all = b.read()
+        self.assertEquals(len(all), len(data))
+        self.assertEquals(all, data)
         b.close()
 
         fd = open(__file__)
