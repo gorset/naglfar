@@ -27,8 +27,11 @@ import sys
 import errno
 import socket
 import unittest
+import collections
+
 from naglfar import *
 from naglfar.sendfile import sendfile
+from naglfar import objects
 
 class Tests(unittest.TestCase):
     def _pair(self):
@@ -214,6 +217,73 @@ class Tests(unittest.TestCase):
             c.close()
         self.assertEquals(d.read(), data[10:])
         d.close()
+
+    def testNamedTuple(self):
+        obj = 1,2
+        out, = objects.loadstream(objects.dumpstream([obj]))
+        self.assertEquals(obj, out)
+
+        obj = collections.namedtuple('a', 'b c')(1,2)
+        out, = objects.loadstream(objects.dumpstream([obj]))
+        self.assertEquals(obj, out)
+
+    def testUnicode(self):
+        blob = objects.dumps(u'hei')
+        s = objects.loads(blob)
+        self.assertEquals(type(s), unicode)
+        self.assertEquals(s, u'hei')
+
+        s2 = objects.loads(objects.dumps(('hei', u'hei')))
+        self.assertEquals(tuple(type(i) for i in s2), (str, unicode))
+        self.assertEquals(s2, ('hei', u'hei'))
+
+    def _pair3(self):
+        a, b = self._pair()
+        a.__class__ = b.__class__ = ObjectFile
+        return a, b
+
+    def testObjectFile(self):
+        a, b = self._pair3()
+        
+        obj1 = (42, 'asdf', ['hehe'])
+        obj2 = 'hei verden'
+
+        @go
+        def client():
+            a.writeObject(obj1)
+            a.writeObject(obj2)
+            a.write('must work')
+            a.close()
+
+        self.assertEquals(b.readObject(), obj1)
+        self.assertEquals(b.readObject(), obj2)
+        self.assertEquals(b.read(), 'must work')
+
+    def testBatch(self):
+        a = Channel()
+        self.assertEquals(a.readWaiting(), [])
+        a.write(1)
+        self.assertEquals(a.readWaiting(), [1])
+        a.write(2)
+        a.write(3)
+        self.assertEquals(a.readWaiting(), [2, 3])
+
+        @go
+        def w():
+            a.write(4)
+            a.write(5)
+
+        self.assertEquals(a.readWaiting(block=True), [4, 5])
+
+        foo = iter(a)
+
+        @go
+        def w():
+            a.write(6)
+            a.write(7)
+
+        self.assertEquals(foo.next(), 6)
+        self.assertEquals(foo.next(), 7)
 
 if __name__ == "__main__":
     unittest.main()

@@ -226,13 +226,31 @@ class Channel(object):
         queue.extend(self.waiting)
         self.waiting = []
 
-    def read(self):
-        "Read from the channel, blocking if it's empty"
+    def wait(self):
         while not self.q:
             # block until we have data
             self.waiting.append(getcurrent().switch)
             scheduler.switch()
+
+    def read(self):
+        "Read from the channel, blocking if it's empty"
+        self.wait()
         return self.q.popleft()
+
+    def readWaiting(self, block=False):
+        if block:
+            self.wait()
+        result = list(self.q)
+        self.q.clear()
+        return result
+
+    def iterateWaiting(self):
+        while True:
+            yield self.readWaiting(True)
+
+    def __iter__(self):
+        while True:
+            yield self.read()
 
 def goRead(fd, n=None):
     "Read n bytes, or the next chunk if n is None"

@@ -23,4 +23,18 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 from core import go, goRead, goWrite, goClose, Channel, ScheduledFile, ScheduledMixIn, scheduler, queue, testScheduledServer
-__all__ = 'go, goRead, goWrite, goClose, Channel, ScheduledFile, ScheduledMixIn, scheduler, queue, testScheduledServer'.split(', ')
+
+import objects
+
+class ObjectFile(ScheduledFile):
+    def readObject(self):
+        headerData = self.read(objects.headerSize)
+        header = objects.parseHeader(headerData)
+        data = self.read(header.length)
+        assert len(data) == header.length
+        return objects.loads(headerData + data)
+
+    def writeObject(self, obj):
+        self.write(objects.dumps(obj))
+
+__all__ = 'go, goRead, goWrite, goClose, Channel, ScheduledFile, ScheduledMixIn, scheduler, queue, testScheduledServer, objects, ObjectFile'.split(', ')
