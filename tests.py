@@ -285,5 +285,13 @@ class Tests(unittest.TestCase):
         self.assertEquals(foo.next(), 6)
         self.assertEquals(foo.next(), 7)
 
+    def testObjectStream(self):
+        a, b = self._pair3()
+        a.writeObject(1)
+        a.writeObject(2)
+        a.write('garbage')
+        a.close()
+        self.assertEquals(list(b.readObjectStream()), [1, 2])
+
 if __name__ == "__main__":
     unittest.main()

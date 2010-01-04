@@ -29,6 +29,7 @@ import objects
 class ObjectFile(ScheduledFile):
     def readObject(self):
         headerData = self.read(objects.headerSize)
+        assert len(headerData) == objects.headerSize
         header = objects.parseHeader(headerData)
         data = self.read(header.length)
         assert len(data) == header.length
@@ -36,5 +37,14 @@ class ObjectFile(ScheduledFile):
 
     def writeObject(self, obj):
         self.write(objects.dumps(obj))
+
+    def readObjectStream(self):
+        while True:
+            try:
+                yield self.readObject()
+            except:
+                # FIXME: check exceptions
+                return
+
 
 __all__ = 'go, goRead, goWrite, goClose, Channel, ScheduledFile, ScheduledMixIn, scheduler, queue, testScheduledServer, objects, ObjectFile'.split(', ')
