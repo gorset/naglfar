@@ -285,8 +285,10 @@ def goWrite(fd, data):
             try:
                 offset += os.write(fd, str(data[offset:offset+bytesReady]))
             except OSError, e:
-                pass # FIXME: do more here? We will try again if we have data left
-            if offset < len(data):
+                if e.errno == errno.EAGAIN:
+                    pass
+                eof = True # treat all other errors as eof
+            if not eof and offset < len(data):
                 o['offset'] = offset
                 return writer
         c.write(offset)
@@ -467,6 +469,8 @@ class ScheduledFile(object):
         self.outgoing = bytearray()
         self._flushers = None
 
+        self.nwrite = self.nread = 0
+
     @classmethod
     def fromSocket(cls, sock, *args, **vargs):
         "Use a existing socket to make instance"
@@ -497,7 +501,11 @@ class ScheduledFile(object):
     def _flusher(self):
         while self.outgoing and self.fd is not None:
             n = goWrite(self.fd, self.outgoing)()
-            del self.outgoing[:n]
+            if n == 0:
+                self.outgoing = None
+            else:
+                del self.outgoing[:n]
+                self.nwrite += n
         for i in self._flushers:
             i.write(True)
         self._flushers = None
@@ -512,42 +520,55 @@ class ScheduledFile(object):
             c.read()
 
     def write(self, data):
+        if None in (self.fd, self.outgoing):
+            raise ValueError('closed')
         self.outgoing.extend(data)
         if self.autoflush:
             self.flush(block=len(self.outgoing) > self.bufferSize)
         elif len(self.outgoing) > self.bufferSize:
             self.flush()
 
-    def readline(self, n=None):
-        "Read a whole line, until eof or maximum n bytes"
-        if '\n' not in self.incoming:
-            while n is None or len(self.incoming) < n:
-                chunk = goRead(self.fd)()
-                self.incoming += chunk
-                if not chunk or '\n' in chunk:
-                    break
+    def _read(self, n=None):
+        assert self.fd is not None
+        chunk = goRead(self.fd, n)()
+        self.nread += len(chunk)
+        return chunk
 
-        pos = self.incoming.find('\n') + 1 or len(self.incoming)
-        line = str(self.incoming[:pos])
-        del self.incoming[:pos]
-        return line
+    def readline(self, n=Ellipsis, separator='\n'):
+        "Read a whole line, until eof or maximum n bytes"
+
+        line = bytearray()
+        for chunk in self.readUntil(separator):
+            assert chunk
+            line += chunk
+            if len(line) >= n:
+                break
+
+        if len(line) == n:
+            return str(line)
+        elif len(line) > n:
+            assert not self.incoming
+            self.incoming = line[n:]
+            return str(line[:n])
+        else:
+            return str(line)
 
     def read(self, n=-1):
         "read n bytes or until eof"
         if n == -1:
             while True:
-                chunk = goRead(self.fd)()
+                chunk = self._read()
                 if not chunk:
                     break
                 self.incoming += chunk
         elif n > len(self.incoming):
-            self.incoming += goRead(self.fd, n - len(self.incoming))()
+            self.incoming += self._read(n - len(self.incoming))
         data = str(self.incoming[:n if n != -1 else len(self.incoming)])
         del self.incoming[:len(data)]
         return data
 
-    def readUntil(self, txt, includingTxt=True):
-        "read until txt or eof"
+    def readUntil(self, separator, includingTxt=True):
+        "read until separator or eof"
         def reader():
             if self.incoming:
                 chunk = str(self.incoming)
@@ -555,16 +576,19 @@ class ScheduledFile(object):
                 yield chunk
 
             while True:
-                yield goRead(self.fd)()
+                chunk = self._read()
+                yield chunk
+                if not chunk:
+                    break
 
-        for chunk in readUntil(reader().next, self.incoming.extend, txt):
+        for chunk in readUntil(reader().next, self.incoming.extend, separator):
             yield chunk
 
         if includingTxt:
             if self.incoming:
-                assert self.incoming.startswith(txt)
-                del self.incoming[:len(txt)]
-                yield txt
+                assert self.incoming.startswith(separator)
+                del self.incoming[:len(separator)]
+                yield separator
 
     def close(self, flush=True):
         if self.fd is None:
@@ -590,11 +614,11 @@ class ScheduledFile(object):
 
 
 
-def readUntil(next, pushback, txt):
+def readUntil(next, pushback, separator):
     result = bytearray()
 
     while True:
-        pos = result.find(txt)
+        pos = result.find(separator)
         if pos != -1:
             rest = result[pos:]
             if rest:
@@ -603,9 +627,9 @@ def readUntil(next, pushback, txt):
             if result:
                 yield str(result)
             return
-        elif len(txt) < len(result):
-            yield str(result[:-len(txt)])
-            del result[:-len(txt)]
+        elif len(separator) < len(result):
+            yield str(result[:-len(separator)])
+            del result[:-len(separator)]
 
         chunk = next()
         if not chunk:
