@@ -20,12 +20,77 @@
 "serialization of some python objects"
 
 import struct
-from collections import namedtuple
+from array import array
 from itertools import count, chain
+from collections import namedtuple
 
 TYPE_TUPLE = 0
 TYPE_BYTES = 1
 TYPE_INTEGER = 2
+
+Header = namedtuple('Header', 'id type length')
+PreHeader = namedtuple('PreHeader', 'id_size length_size type')
+
+# id
+# (id_size:3)(length_size:3)(type:2)(id:id_size<<2)(length:length_size<<2)
+
+def unpackHeader1(b):
+    object_type = b & 3
+    length_size = b & 28 or 32
+    id_size     = (b & 224) >> 3 or 32
+    if (id_size + length_size) & 7:
+        id_size += 2
+        length_size += 2
+    return PreHeader(id_size, length_size, object_type)
+
+def unpackHeader2(data, id_size, length_size, offset=0):
+    assert id_size + length_size <= 64
+    if len(data) - offset < 8:
+        data = str(data[offset:]) + '\x00\x00\x00\x00\x00\x00\x00\x00'
+        offset = 0
+    n, = struct.unpack('>Q', str(data[offset:offset+8]))
+    return n>>(64-id_size), (n>>(64-id_size-length_size)) & ((1<<length_size)-1)
+
+u = 99
+table = 32,31,u,16,u,30,3,u,15,u,u,u,29,10,2,u,u,u,12,14,21,u,19,u,u,28,u,25,u,9,1,u,17,u,4,u,u,u,11,u,13,22,20,u,26,u,u,18,5,u,u,23,u,27,u,6,u,24,7,u,8,u,0,u
+
+def nlz(x):
+    x |= (x >> 1)
+    x |= (x >> 2)
+    x |= (x >> 4)
+    x |= (x >> 8)
+    x |= (x >> 16)
+    x *= 0x06EB14F9
+    x &= 4294967295
+    return 32-table[x >> 26]
+
+def marshalHeader(id, type, length):
+    assert type <= 3 and type >= 0
+    id_size = nlz(id)
+    length_size = nlz(length)
+
+    if not id_size:
+        id_size = 2
+    if not length_size:
+        length_size = 2
+    if id_size & 1:
+        id_size += 1
+    if length_size & 1:
+        length_size += 1
+    while id_size & 7:
+        id_size += 2
+    while length_size & 7:
+        length_size += 2
+
+    n = 0
+    n |= id<<(64-id_size) 
+    n |= length<<(64-id_size-length_size) 
+    return chr(((id_size<<3)&224) | (length_size&28) | type) + struct.pack('>Q', n)[:(id_size+length_size) >> 3]
+
+def parseHeader(data):
+    id_size, length_size, type = unpackHeader1(ord(data[0]))
+    id, length = unpackHeader2(data, id_size, length_size, 1)
+    return Header(id, type, length)
 
 def bytesToInt(data):
     n = sum((ord(i) << (8*pos)) for pos, i in enumerate(data))
@@ -141,7 +206,9 @@ def dump(root, objects=None, idMap=None, ids=None):
 def marshal(stream):
     for id, t, data in stream:
         raw = marshalData(t, data)
-        yield struct.pack('%s%ss' % (headerFormat, len(raw)), id, t, len(raw), raw)
+        yield marshalHeader(id, t, len(raw))
+        yield raw
+        #yield struct.pack('%s%ss' % (headerFormat, len(raw)), id, t, len(raw), raw)
 
 def marshalData(t, data):
     if t == TYPE_BYTES:
@@ -153,27 +220,29 @@ def marshalData(t, data):
     else:
         assert 0, (t, data)
 
-headerFormat = '>LBL'
-headerSize = struct.calcsize(headerFormat)
-Header = namedtuple('Header', 'id type length')
-
-def parseHeader(data):
-    return Header._make(struct.unpack_from(headerFormat, data))
+#def parseHeader(data):
+#    return Header._make(struct.unpack_from(headerFormat, data))
 
 def unmarshal(stream):
     stream = iter(stream)
-    buf = bytearray()
+    buffer = bytearray()
     while True:
-        while len(buf) < headerSize:
-            buf += stream.next()
+        if not buffer:
+            buffer += stream.next()
 
-        header = parseHeader(str(buf[:headerSize]))
-        while len(buf) < header.length + headerSize:
-            buf += stream.next()
+        id_size, length_size, type = unpackHeader1(buffer[0])
+        headerSize = 1 + ((id_size+length_size)>>3)
+        while len(buffer) < headerSize:
+            buffer += stream.next()
 
-        data = unmarshalData(header.type, str(buf), headerSize, header.length)
-        del buf[:headerSize+header.length]
-        yield header.id, header.type, data
+        id, length = unpackHeader2(buffer, id_size, length_size, 1)
+
+        while len(buffer) < headerSize + length:
+            buffer += stream.next()
+
+        data = unmarshalData(type, str(buffer), headerSize, length)
+        del buffer[:headerSize+length]
+        yield id, type, data
 
 def unmarshalData(type, block, offset, size):
     assert len(block) >= offset + size, (len(block), offset, size)

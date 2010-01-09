@@ -293,5 +293,33 @@ class Tests(unittest.TestCase):
         a.close()
         self.assertEquals(list(b.readObjectStream()), [1, 2])
 
+    def testSize(self):
+        self.assertEquals(objects.unpackHeader1(0), (32, 32, 0))
+        self.assertEquals(objects.unpackHeader1(int('11111111', 2)), (28, 28, 3))
+        self.assertEquals(objects.unpackHeader1(int('01011111', 2)), (10, 30, 3))
+
+        self.assertEquals(objects.unpackHeader2('aaa', 8, 16), (97, 24929))
+        self.assertEquals(objects.unpackHeader2('\xff', 4, 4), (15, 15))
+
+    def testHeader(self):
+        def t(id, type, length):
+            data = objects.marshalHeader(id, type, length)
+            id_size, length_size, header_type = objects.unpackHeader1(ord(data[0]))
+            self.assertEquals(header_type, type)
+            self.assertEquals(objects.parseHeader(objects.marshalHeader(id, type, length)), (id, type, length))
+
+        t(0, 0, 0)
+        t(1, 2, 1)
+        t(1, 3, 1)
+        t(0, 1, 4)
+        for x in xrange(32):
+            for y in xrange(32):
+                t(x, 1, y)
+
+    def testObjects(self):
+        obj = 0, objects.TYPE_INTEGER, 42
+        data = ''.join(objects.marshal([obj]))
+        self.assertEquals(list(objects.unmarshal([data])), [obj])
+
 if __name__ == "__main__":
     unittest.main()

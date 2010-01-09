@@ -28,12 +28,17 @@ import objects
 
 class ObjectFile(ScheduledFile):
     def readObject(self):
-        headerData = self.read(objects.headerSize)
-        assert len(headerData) == objects.headerSize
-        header = objects.parseHeader(headerData)
-        data = self.read(header.length)
-        assert len(data) == header.length
-        return objects.loads(headerData + data)
+        preHeaderData = self.read(1)
+        preHeader = objects.unpackHeader1(ord(preHeaderData))
+        headerSize = (preHeader.id_size+preHeader.length_size)>>3
+        headerData = self.read(headerSize)
+        assert len(headerData) == headerSize
+        id, length = objects.unpackHeader2(headerData, preHeader.id_size, preHeader.length_size)
+        assert id == 0 and preHeader.type == objects.TYPE_BYTES
+
+        data = self.read(length)
+        assert len(data) == length
+        return objects.load(objects.unmarshal([data]))
 
     def writeObject(self, obj):
         self.write(objects.dumps(obj))
