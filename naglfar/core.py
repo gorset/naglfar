@@ -561,8 +561,12 @@ class ScheduledFile(object):
                 if not chunk:
                     break
                 self.incoming += chunk
-        elif n > len(self.incoming):
-            self.incoming += self._read(n - len(self.incoming))
+        else:
+            while n > len(self.incoming):
+                chunk = self._read()
+                self.incoming += chunk
+                if not chunk:
+                    break
         data = str(self.incoming[:n if n != -1 else len(self.incoming)])
         del self.incoming[:len(data)]
         return data
