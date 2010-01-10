@@ -321,5 +321,13 @@ class Tests(unittest.TestCase):
         data = ''.join(objects.marshal([obj]))
         self.assertEquals(list(objects.unmarshal([data])), [obj])
 
+    def testInt(self):
+        for x in xrange(-10, 10):
+            self.assertEquals(objects.bytesToInt(objects.intToBytes(x)), x)
+
+        for x in xrange(0, 10):
+            self.assertEquals(objects.bytesToInt(objects.intToBytes(1<<x)), 1<<x)
+            self.assertEquals(objects.bytesToInt(objects.intToBytes(-(1<<x))), -(1<<x))
+
 if __name__ == "__main__":
     unittest.main()

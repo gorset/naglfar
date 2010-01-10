@@ -20,7 +20,7 @@
 "serialization of some python objects"
 
 import struct
-from array import array
+import binascii
 from itertools import count, chain
 from collections import namedtuple
 
@@ -97,15 +97,21 @@ def bytesToInt(data):
     return -(n >> 1) if n & 1 else n >> 1
 
 def intToBytes(n):
-    if n < 0:
-        n = (-n << 1) + 1
+    if not n:
+        return ''
+    elif n < 0:
+        h = hex(((-n)<<1) | 1)
     else:
-        n <<= 1
-    b = bytearray()
-    while n:
-        b.append(n & 255)
-        n >>= 8
-    return str(b)
+        h = hex(n<<1)
+
+    if h.endswith('L'):
+        h = h[2:-1]
+    else:
+        h = h[2:]
+
+    if len(h) & 1:
+        h = '0' + h
+    return binascii.unhexlify(h)[::-1]
 
 def load(stream):
     objects = {}
