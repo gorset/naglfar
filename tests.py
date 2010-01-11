@@ -316,6 +316,10 @@ class Tests(unittest.TestCase):
             for y in xrange(32):
                 t(x, 1, y)
 
+        for x in xrange(32):
+            for y in xrange(32):
+                t(1<<x, 1, 1<<y)
+
     def testObjects(self):
         obj = 0, objects.TYPE_INTEGER, 42
         data = ''.join(objects.marshal([obj]))

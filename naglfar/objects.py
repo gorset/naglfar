@@ -69,17 +69,23 @@ def marshalHeader(id, type, length):
     id_size = nlz(id)
     length_size = nlz(length)
 
-    if not id_size:
-        id_size = 2
-    if not length_size:
-        length_size = 2
+    if id_size < 4:
+        id_size = 4
+    if length_size < 4:
+        length_size = 4
     if id_size & 1:
         id_size += 1
     if length_size & 1:
         length_size += 1
-    while id_size & 7:
+
+    if id_size & 3:
+        if not length_size & 3:
+            id_size += 2
+    elif length_size & 3:
+        length_size += 2
+
+    if (id_size + length_size) & 7:
         id_size += 2
-    while length_size & 7:
         length_size += 2
 
     n = 0
