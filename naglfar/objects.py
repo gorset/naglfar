@@ -51,8 +51,7 @@ def unpackHeader2(data, id_size, length_size, offset=0):
     n, = struct.unpack('>Q', str(data[offset:offset+8]))
     return n>>(64-id_size), (n>>(64-id_size-length_size)) & ((1<<length_size)-1)
 
-u = 99
-table = 32,31,u,16,u,30,3,u,15,u,u,u,29,10,2,u,u,u,12,14,21,u,19,u,u,28,u,25,u,9,1,u,17,u,4,u,u,u,11,u,13,22,20,u,26,u,u,18,5,u,u,23,u,27,u,6,u,24,7,u,8,u,0,u
+table = [0, 1, None, 16, None, 2, 29, None, 17, None, None, None, 3, 22, 30, None, None, None, 20, 18, 11, None, 13, None, None, 4, None, 7, None, 23, 31, None, 15, None, 28, None, None, None, 21, None, 19, 10, 12, None, 6, None, None, 14, 27, None, None, 9, None, 5, None, 26, None, 8, 25, None, 24, None, 32, None]
 
 def nlz(x):
     x |= (x >> 1)
@@ -62,7 +61,7 @@ def nlz(x):
     x |= (x >> 16)
     x *= 0x06EB14F9
     x &= 4294967295
-    return 32-table[x >> 26]
+    return table[x >> 26]
 
 def marshalHeader(id, type, length):
     assert type <= 3 and type >= 0
