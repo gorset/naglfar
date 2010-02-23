@@ -30,6 +30,7 @@ TYPE_INTEGER = 2
 
 Header = namedtuple('Header', 'id type length')
 PreHeader = namedtuple('PreHeader', 'id_size length_size type')
+Element = namedtuple('Element', 'id type data')
 
 # id
 # (id_size:3)(length_size:3)(type:2)(id:id_size<<2)(length:length_size<<2)
@@ -121,12 +122,12 @@ def intToBytes(n):
 def load(stream):
     objects = {}
     deferred = {}
-    for x, y, z in stream:
-        if y in (TYPE_INTEGER, TYPE_BYTES):
-            objects[x] = z
+    for i in stream:
+        if i.type in (TYPE_INTEGER, TYPE_BYTES):
+            objects[i.id] = i.data
         else:
-            assert y == TYPE_TUPLE
-            deferred[x] = z
+            assert i.type == TYPE_TUPLE
+            deferred[i.id] = i.data
 
     def get(identity):
         if identity in objects:
@@ -143,6 +144,9 @@ def load(stream):
         elif t == 'list':
             objects[identity] = data = []
             data.extend(get(i) for i in iterator)
+        elif t == 'set':
+            objects[identity] = data = set()
+            data.update(get(i) for i in iterator)
         elif t == 'unicode':
             objects[identity] = data = unicode(get(iterator.next()), 'UTF-8')
         else:
@@ -200,12 +204,14 @@ def dump(root, objects=None, idMap=None, ids=None):
         elif type(obj) == bytes:
             yield identity, TYPE_BYTES, obj
         else:
-            if type(obj) == dict:
+            if isinstance(obj, dict):
                 values = ('dict', ) + tuple(chain(*obj.items()))
             elif type(obj) == list:
                 values = ('list', ) + tuple(obj)
             elif isinstance(obj, tuple):
                 values = ('tuple',) + obj
+            elif type(obj) == set:
+                values = ('set', ) + tuple(obj)
             elif type(obj) == unicode:
                 values = ('unicode', obj.encode('UTF-8'))
             else:
@@ -227,7 +233,21 @@ def marshalData(t, data):
     elif t == TYPE_INTEGER:
         return intToBytes(data)
     elif t == TYPE_TUPLE:
-        return ''.join(struct.pack('>' + 'L'*len(data), *data))
+        if not data:
+            return ''
+        n = max(data)
+        if n<256:
+            h = '\x00'
+            format = 'B'
+        elif n<65536:
+            h = '\x01'
+            format = 'H'
+        elif n<4294967296:
+            h = '\x02'
+            format = 'I'
+        else:
+            assert False
+        return h + ''.join(struct.pack('>' + format*len(data), *data))
     else:
         assert 0, (t, data)
 
@@ -253,7 +273,7 @@ def unmarshal(stream):
 
         data = unmarshalData(type, str(buffer), headerSize, length)
         del buffer[:headerSize+length]
-        yield id, type, data
+        yield Element(id, type, data)
 
 def unmarshalData(type, block, offset, size):
     assert len(block) >= offset + size, (len(block), offset, size)
@@ -262,8 +282,19 @@ def unmarshalData(type, block, offset, size):
     elif type == TYPE_INTEGER:
         return bytesToInt(block[offset:offset+size])
     elif type == TYPE_TUPLE:
-        assert not size % 4
-        return tuple(struct.unpack_from('>' + 'L'*(size / 4), block, offset))
+        if not size:
+            return ()
+        h = ord(block[offset])
+        size -= 1
+        if h == 0:
+            format = 'B'*size
+        elif h == 1:
+            assert not size & 1
+            format = 'H'*(size/2)
+        elif h == 2:
+            assert not size & 3, size
+            format == 'I'*(size/4)
+        return tuple(struct.unpack_from('>' + format, block, offset+1))
     else:
         assert 0, type
 
@@ -274,9 +305,9 @@ def dumpstream(stream):
             yield j
 
 def loadstream(stream):
-    for id, t, data in unmarshal(stream):
-        assert id == 0 and t == TYPE_BYTES
-        yield load(unmarshal([data]))
+    for i in unmarshal(stream):
+        assert i.id == 0 and i.type == TYPE_BYTES
+        yield load(unmarshal([i.data]))
 
 def dumps(obj):
     return ''.join(dumpstream([obj]))

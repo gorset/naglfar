@@ -333,5 +333,12 @@ class Tests(unittest.TestCase):
             self.assertEquals(objects.bytesToInt(objects.intToBytes(1<<x)), 1<<x)
             self.assertEquals(objects.bytesToInt(objects.intToBytes(-(1<<x))), -(1<<x))
 
+    def testVariousObjects(self):
+        check = lambda x:self.assertEquals(objects.loads(objects.dumps(x)), x)
+        check(42)
+        check([])
+        check(set())
+
+
 if __name__ == "__main__":
     unittest.main()
