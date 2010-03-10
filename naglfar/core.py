@@ -101,6 +101,8 @@ class ScheduledMixIn:
                 except socket.error, e:
                     if e.errno == errno.EAGAIN: # either epoll, a kernel bug or a race condition
                         break
+                    # FIXME: more error handling?
+                    raise
                 self.acceptStream.write(client)
             if not eof:
                 return runner
